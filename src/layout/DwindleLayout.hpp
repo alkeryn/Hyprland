@@ -66,6 +66,8 @@ class CHyprDwindleLayout : public IHyprLayout {
     virtual void                     onEnable();
     virtual void                     onDisable();
 
+    void                             renderPreselectionFeedback(PHLMONITOR pMonitor);
+
   private:
     std::vector<SP<SDwindleNodeData>> m_dwindleNodesData;
 
@@ -91,6 +93,7 @@ class CHyprDwindleLayout : public IHyprLayout {
     void                    moveToRoot(PHLWINDOW, bool stable = true);
 
     eDirection              m_overrideDirection = DIRECTION_DEFAULT;
+    CBox                    calculatePreselectionBox(const WORKSPACEID& workspace);
 
     friend struct SDwindleNodeData;
 };

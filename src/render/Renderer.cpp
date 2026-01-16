@@ -12,6 +12,7 @@
 #include "../managers/HookSystemManager.hpp"
 #include "../managers/animation/AnimationManager.hpp"
 #include "../managers/LayoutManager.hpp"
+#include "../layout/DwindleLayout.hpp"
 #include "../desktop/view/Window.hpp"
 #include "../desktop/view/LayerSurface.hpp"
 #include "../desktop/view/GlobalViewMethods.hpp"
@@ -1409,6 +1410,12 @@ void CHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
             } else {
                 CBox renderBox = {0, 0, sc<int>(pMonitor->m_pixelSize.x), sc<int>(pMonitor->m_pixelSize.y)};
                 renderWorkspace(pMonitor, pMonitor->m_activeWorkspace, NOW, renderBox);
+
+                // Render dwindle layout preselection feedback if active
+                if (g_pLayoutManager->getCurrentLayout()->getLayoutName() == "dwindle") {
+                    if (auto* dwindleLayout = dynamic_cast<CHyprDwindleLayout*>(g_pLayoutManager->getCurrentLayout()))
+                        dwindleLayout->renderPreselectionFeedback(pMonitor);
+                }
 
                 renderLockscreen(pMonitor, NOW, renderBox);
 

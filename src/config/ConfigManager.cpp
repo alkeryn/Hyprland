@@ -624,6 +624,7 @@ CConfigManager::CConfigManager() {
     registerConfigVar("dwindle:precise_mouse_move", Hyprlang::INT{0});
     registerConfigVar("dwindle:single_window_aspect_ratio", Hyprlang::VEC2{0, 0});
     registerConfigVar("dwindle:single_window_aspect_ratio_tolerance", {0.1f});
+    registerConfigVar("dwindle:col.presel_feedback", Hyprlang::CConfigCustomValueType{&configHandleGradientSet, configHandleGradientDestroy, "0x00000000"});
 
     registerConfigVar("master:special_scale_factor", {1.f});
     registerConfigVar("master:mfact", {0.55f});

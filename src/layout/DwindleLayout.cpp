@@ -4,6 +4,7 @@
 #include "../config/ConfigManager.hpp"
 #include "../render/decorations/CHyprGroupBarDecoration.hpp"
 #include "../render/Renderer.hpp"
+#include "../render/pass/RectPassElement.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../managers/LayoutManager.hpp"
 #include "../managers/EventManager.hpp"
@@ -1019,6 +1020,8 @@ std::any CHyprDwindleLayout::layoutMessage(SLayoutMessageHeader header, std::str
             return "";
         }
 
+        eDirection oldDirection = m_overrideDirection;
+
         switch (direction.front()) {
             case 'u':
             case 't': {
@@ -1044,6 +1047,13 @@ std::any CHyprDwindleLayout::layoutMessage(SLayoutMessageHeader header, std::str
                 m_overrideDirection = DIRECTION_DEFAULT;
                 break;
             }
+        }
+
+        // Damage the monitor to trigger a redraw when preselection changes
+        if (oldDirection != m_overrideDirection && header.pWindow) {
+            const auto PMONITOR = header.pWindow->m_monitor.lock();
+            if (PMONITOR)
+                g_pHyprRenderer->damageMonitor(PMONITOR);
         }
     }
 
@@ -1187,4 +1197,112 @@ Vector2D CHyprDwindleLayout::predictSizeForNewWindowTiled() {
     }
 
     return {};
+}
+
+CBox CHyprDwindleLayout::calculatePreselectionBox(const WORKSPACEID& workspace) {
+    if (m_overrideDirection == DIRECTION_DEFAULT)
+        return {};
+
+    const auto PMONITOR = g_pCompositor->getMonitorFromID(g_pCompositor->getWorkspaceByID(workspace)->monitorID());
+    if (!PMONITOR)
+        return {};
+
+    static auto          PUSEACTIVE       = CConfigValue<Hyprlang::INT>("dwindle:use_active_for_splits");
+    static auto          PWIDTHMULTIPLIER = CConfigValue<Hyprlang::FLOAT>("dwindle:split_width_multiplier");
+
+    SP<SDwindleNodeData> OPENINGON;
+
+    const auto           MOUSECOORDS   = m_overrideFocalPoint.value_or(g_pInputManager->getMouseCoordsInternal());
+    const auto           MONFROMCURSOR = g_pCompositor->getMonitorFromVector(MOUSECOORDS);
+
+    if (PMONITOR->m_id == MONFROMCURSOR->m_id &&
+        (workspace == PMONITOR->activeWorkspaceID() || (g_pCompositor->isWorkspaceSpecial(workspace) && PMONITOR->m_activeSpecialWorkspace)) && !*PUSEACTIVE) {
+        OPENINGON = getNodeFromWindow(
+            g_pCompositor->vectorToWindowUnified(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::SKIP_FULLSCREEN_PRIORITY));
+
+        if (!OPENINGON && g_pCompositor->isPointOnReservedArea(MOUSECOORDS, PMONITOR))
+            OPENINGON = getClosestNodeOnWorkspace(workspace, MOUSECOORDS);
+
+    } else if (*PUSEACTIVE) {
+        if (Desktop::focusState()->window() && !Desktop::focusState()->window()->m_isFloating && Desktop::focusState()->window()->m_workspace &&
+            Desktop::focusState()->window()->m_workspace->m_id == workspace && Desktop::focusState()->window()->m_isMapped) {
+            OPENINGON = getNodeFromWindow(Desktop::focusState()->window());
+        } else {
+            OPENINGON = getNodeFromWindow(g_pCompositor->vectorToWindowUnified(MOUSECOORDS, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS));
+        }
+
+        if (!OPENINGON && g_pCompositor->isPointOnReservedArea(MOUSECOORDS, PMONITOR))
+            OPENINGON = getClosestNodeOnWorkspace(workspace, MOUSECOORDS);
+
+    } else
+        OPENINGON = getFirstNodeOnWorkspace(workspace);
+
+    if (!OPENINGON || OPENINGON->workspaceID != workspace)
+        return {};
+
+    // Calculate what the new window box would be
+    CBox parentBox = OPENINGON->box;
+
+    bool horizontalOverride = false;
+    bool verticalOverride   = false;
+
+    // Determine split orientation based on override direction
+    if (m_overrideDirection % 2 == 0)
+        verticalOverride = true;
+    else
+        horizontalOverride = true;
+
+    bool newWindowFirst = (m_overrideDirection % 3 == 0);
+
+    CBox newWindowBox;
+
+    if (!verticalOverride && (parentBox.w * *PWIDTHMULTIPLIER > parentBox.h || horizontalOverride)) {
+        // split left/right
+        if (newWindowFirst) {
+            newWindowBox = {parentBox.pos(), Vector2D(parentBox.w / 2.f, parentBox.h)};
+        } else {
+            newWindowBox = {Vector2D(parentBox.x + parentBox.w / 2.f, parentBox.y), Vector2D(parentBox.w / 2.f, parentBox.h)};
+        }
+    } else {
+        // split top/bottom
+        if (newWindowFirst) {
+            newWindowBox = {parentBox.pos(), Vector2D(parentBox.w, parentBox.h / 2.f)};
+        } else {
+            newWindowBox = {Vector2D(parentBox.x, parentBox.y + parentBox.h / 2.f), Vector2D(parentBox.w, parentBox.h / 2.f)};
+        }
+    }
+
+    return newWindowBox;
+}
+
+void CHyprDwindleLayout::renderPreselectionFeedback(PHLMONITOR pMonitor) {
+    if (m_overrideDirection == DIRECTION_DEFAULT)
+        return;
+
+    static auto PPRESELCOLOR = CConfigValue<Hyprlang::CUSTOMTYPE>("dwindle:col.presel_feedback");
+
+    const auto* color = sc<CGradientValueData*>((PPRESELCOLOR.ptr())->getData());
+
+    // Check if the color is not fully transparent
+    if (color->m_colors.empty() || (color->m_colors.size() == 1 && color->m_colors[0].a == 0))
+        return;
+
+    const auto workspace = pMonitor->m_activeWorkspace;
+    if (!workspace)
+        return;
+
+    const auto box = calculatePreselectionBox(workspace->m_id);
+
+    if (box.w <= 0 || box.h <= 0)
+        return;
+
+    // Convert from absolute screen coordinates to monitor-local coordinates
+    CBox localBox = box;
+    localBox.x -= pMonitor->m_position.x;
+    localBox.y -= pMonitor->m_position.y;
+
+    CRectPassElement::SRectData data;
+    data.box   = localBox;
+    data.color = color->m_colors[0];
+    g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
 }
