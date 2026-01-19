@@ -1007,6 +1007,24 @@ SDispatchResult CKeybindManager::killActive(std::string args) {
 }
 
 SDispatchResult CKeybindManager::closeActive(std::string args) {
+    // First, close all selected windows
+    std::vector<PHLWINDOW> selectedWindows;
+    for (auto const& w : g_pCompositor->m_windows) {
+        if (w->m_isMapped && w->m_selected)
+            selectedWindows.push_back(w);
+    }
+
+    for (auto const& w : selectedWindows) {
+        if (w->m_closeableSince > Time::steadyNow())
+            continue;
+        g_pCompositor->closeWindow(w);
+    }
+
+    // If there were selected windows, we're done
+    if (!selectedWindows.empty())
+        return {};
+
+    // Otherwise, close the focused window
     if (Desktop::focusState()->window() && Desktop::focusState()->window()->m_closeableSince > Time::steadyNow())
         return {.success = false, .error = "can't close window, it's not closeable yet (noclosefor)"};
 

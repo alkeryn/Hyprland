@@ -65,6 +65,7 @@ class CHyprDwindleLayout : public IHyprLayout {
 
     virtual void                     onEnable();
     virtual void                     onDisable();
+    virtual void                     onWindowFocusChange(PHLWINDOW);
 
     void                             renderPreselectionFeedback(PHLMONITOR pMonitor);
 
@@ -90,6 +91,10 @@ class CHyprDwindleLayout : public IHyprLayout {
 
     void                    toggleSplit(PHLWINDOW);
     void                    swapSplit(PHLWINDOW);
+    void                    setSelectedRecursive(SP<SDwindleNodeData> pNode, bool selected);
+    SP<SDwindleNodeData>    getTopmostSelectedNode(SP<SDwindleNodeData> pNode);
+    bool                    hasSelectedWindow(SP<SDwindleNodeData> pNode);
+    bool                    allWindowsSelected(SP<SDwindleNodeData> pNode);
     void                    moveToRoot(PHLWINDOW, bool stable = true);
 
     eDirection              m_overrideDirection = DIRECTION_DEFAULT;

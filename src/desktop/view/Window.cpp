@@ -1828,7 +1828,7 @@ void CWindow::updateDecorationValues() {
         setBorderColor(*RENDERDATA.borderGradient);
     else {
         const bool GROUPLOCKED = m_groupData.pNextWindow.lock() ? getGroupHead()->m_groupData.locked : false;
-        if (m_self == Desktop::focusState()->window()) {
+        if (m_self == Desktop::focusState()->window() || m_selected) {
             const auto* const ACTIVECOLOR =
                 !m_groupData.pNextWindow.lock() ? (!m_groupData.deny ? ACTIVECOL : NOGROUPACTIVECOL) : (GROUPLOCKED ? GROUPACTIVELOCKEDCOL : GROUPACTIVECOL);
             setBorderColor(m_ruleApplicator->activeBorderColor().valueOr(*ACTIVECOLOR));

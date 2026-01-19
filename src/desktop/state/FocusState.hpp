@@ -15,8 +15,8 @@ namespace Desktop {
         CFocusState(CFocusState&)       = delete;
         CFocusState(const CFocusState&) = delete;
 
-        void                   fullWindowFocus(PHLWINDOW w, SP<CWLSurfaceResource> surface = nullptr, bool forceFSCycle = false);
-        void                   rawWindowFocus(PHLWINDOW w, SP<CWLSurfaceResource> surface = nullptr);
+        void                   fullWindowFocus(PHLWINDOW w, SP<CWLSurfaceResource> surface = nullptr, bool forceFSCycle = false, bool preserveSelection = false);
+        void                   rawWindowFocus(PHLWINDOW w, SP<CWLSurfaceResource> surface = nullptr, bool preserveSelection = false);
         void                   rawSurfaceFocus(SP<CWLSurfaceResource> s, PHLWINDOW pWindowOwner = nullptr);
         void                   rawMonitorFocus(PHLMONITOR m);
 

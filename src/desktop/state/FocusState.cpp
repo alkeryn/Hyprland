@@ -61,7 +61,7 @@ static SFullscreenWorkspaceFocusResult onFullscreenWorkspaceFocusWindow(PHLWINDO
     return {};
 }
 
-void CFocusState::fullWindowFocus(PHLWINDOW pWindow, SP<CWLSurfaceResource> surface, bool forceFSCycle) {
+void CFocusState::fullWindowFocus(PHLWINDOW pWindow, SP<CWLSurfaceResource> surface, bool forceFSCycle, bool preserveSelection) {
     if (pWindow) {
         if (!pWindow->m_workspace)
             return;
@@ -81,10 +81,10 @@ void CFocusState::fullWindowFocus(PHLWINDOW pWindow, SP<CWLSurfaceResource> surf
         return;
     }
 
-    rawWindowFocus(pWindow, surface);
+    rawWindowFocus(pWindow, surface, preserveSelection);
 }
 
-void CFocusState::rawWindowFocus(PHLWINDOW pWindow, SP<CWLSurfaceResource> surface) {
+void CFocusState::rawWindowFocus(PHLWINDOW pWindow, SP<CWLSurfaceResource> surface, bool preserveSelection) {
     static auto PFOLLOWMOUSE        = CConfigValue<Hyprlang::INT>("input:follow_mouse");
     static auto PSPECIALFALLTHROUGH = CConfigValue<Hyprlang::INT>("input:special_fallthrough");
 

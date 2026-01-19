@@ -1736,6 +1736,18 @@ void CCompositor::updateAllWindowsAnimatedDecorationValues() {
     }
 }
 
+void CCompositor::clearAllWindowsSelectedStates() {
+    for (auto const& w : m_windows) {
+        if (!w->m_isMapped)
+            continue;
+
+        if (w->m_selected) {
+            w->m_selected = false;
+            w->updateDecorationValues();
+        }
+    }
+}
+
 MONITORID CCompositor::getNextAvailableMonitorID(std::string const& name) {
     // reuse ID if it's already in the map, and the monitor with that ID is not being used by another monitor
     if (m_monitorIDMap.contains(name) && !std::ranges::any_of(m_realMonitors, [&](auto m) { return m->m_id == m_monitorIDMap[name]; }))

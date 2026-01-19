@@ -1002,6 +1002,125 @@ void CHyprDwindleLayout::alterSplitRatio(PHLWINDOW pWindow, float ratio, bool ex
     PNODE->pParent->recalcSizePosRecursive();
 }
 
+void CHyprDwindleLayout::setSelectedRecursive(SP<SDwindleNodeData> pNode, bool selected) {
+    if (!pNode)
+        return;
+
+    // If this is a leaf node with a window, set its selected state
+    if (!pNode->isNode && !pNode->pWindow.expired()) {
+        const auto PWINDOW = pNode->pWindow.lock();
+        if (PWINDOW) {
+            PWINDOW->m_selected = selected;
+            PWINDOW->updateDecorationValues();
+        }
+    }
+
+    // Recursively set selected state for children
+    if (pNode->children[0])
+        setSelectedRecursive(pNode->children[0].lock(), selected);
+    if (pNode->children[1])
+        setSelectedRecursive(pNode->children[1].lock(), selected);
+}
+
+void CHyprDwindleLayout::onWindowFocusChange(PHLWINDOW pWindow) {
+    IHyprLayout::onWindowFocusChange(pWindow);
+
+    if (!pWindow)
+        return;
+
+    const auto PNODE = getNodeFromWindow(pWindow);
+    if (!PNODE)
+        return;
+
+    // Clear selected state only for children of this window's node
+    if (PNODE->children[0])
+        setSelectedRecursive(PNODE->children[0].lock(), false);
+    if (PNODE->children[1])
+        setSelectedRecursive(PNODE->children[1].lock(), false);
+}
+
+bool CHyprDwindleLayout::allWindowsSelected(SP<SDwindleNodeData> pNode) {
+    if (!pNode)
+        return true; // Empty nodes are considered "all selected"
+
+    // If this is a leaf node with a window, check if it's selected
+    if (!pNode->isNode && !pNode->pWindow.expired()) {
+        const auto PWINDOW = pNode->pWindow.lock();
+        return PWINDOW && PWINDOW->m_selected;
+    }
+
+    // For container nodes, check if all children have all windows selected
+    bool allSelected = true;
+    if (pNode->children[0])
+        allSelected = allSelected && allWindowsSelected(pNode->children[0].lock());
+    if (pNode->children[1])
+        allSelected = allSelected && allWindowsSelected(pNode->children[1].lock());
+
+    return allSelected;
+}
+
+SP<SDwindleNodeData> CHyprDwindleLayout::getTopmostSelectedNode(SP<SDwindleNodeData> pNode) {
+    if (!pNode)
+        return nullptr;
+
+    // If this is a leaf node with a selected window, traverse up to find the topmost selected ancestor
+    if (!pNode->isNode && !pNode->pWindow.expired()) {
+        const auto PWINDOW = pNode->pWindow.lock();
+        if (PWINDOW && PWINDOW->m_selected) {
+            // Found a selected window, now traverse up to find the topmost selected node
+            SP<SDwindleNodeData> topmostSelected = pNode;
+            auto                 current         = pNode->pParent.lock();
+
+            while (current) {
+                // Check if this parent node has all windows selected
+                if (allWindowsSelected(current)) {
+                    topmostSelected = current;
+                    current         = current->pParent.lock();
+                } else {
+                    break;
+                }
+            }
+
+            return topmostSelected;
+        }
+    }
+
+    // Recursively search in children
+    if (pNode->children[0]) {
+        auto result = getTopmostSelectedNode(pNode->children[0].lock());
+        if (result)
+            return result;
+    }
+
+    if (pNode->children[1]) {
+        auto result = getTopmostSelectedNode(pNode->children[1].lock());
+        if (result)
+            return result;
+    }
+
+    return nullptr;
+}
+
+bool CHyprDwindleLayout::hasSelectedWindow(SP<SDwindleNodeData> pNode) {
+    if (!pNode)
+        return false;
+
+    // If this is a leaf node with a window, check if it's selected
+    if (!pNode->isNode && !pNode->pWindow.expired()) {
+        const auto PWINDOW = pNode->pWindow.lock();
+        return PWINDOW && PWINDOW->m_selected;
+    }
+
+    // For container nodes, check if any child has a selected window
+    bool hasSelected = false;
+    if (pNode->children[0])
+        hasSelected = hasSelected || hasSelectedWindow(pNode->children[0].lock());
+    if (pNode->children[1])
+        hasSelected = hasSelected || hasSelectedWindow(pNode->children[1].lock());
+
+    return hasSelected;
+}
+
 std::any CHyprDwindleLayout::layoutMessage(SLayoutMessageHeader header, std::string message) {
     const auto ARGS = CVarList(message, 0, ' ');
     if (ARGS[0] == "togglesplit") {
@@ -1054,6 +1173,277 @@ std::any CHyprDwindleLayout::layoutMessage(SLayoutMessageHeader header, std::str
             const auto PMONITOR = header.pWindow->m_monitor.lock();
             if (PMONITOR)
                 g_pHyprRenderer->damageMonitor(PMONITOR);
+        }
+    } else if (ARGS[0] == "selectnode") {
+        std::string target = ARGS[1];
+
+        if (target.empty()) {
+            Log::logger->log(Log::ERR, "Expected target for selectnode");
+            return "";
+        }
+
+        if (!header.pWindow) {
+            return "";
+        }
+
+        const auto PNODE = getNodeFromWindow(header.pWindow);
+
+        if (!PNODE) {
+            return "";
+        }
+
+        if (target == "parent") {
+            // First, check if there's already a selected node
+            // If yes, find the topmost selected node and select its parent
+            // If no, select the parent of the current window
+
+            SP<SDwindleNodeData> nodeToExpand = nullptr;
+
+            // Search through all nodes to find any selected window
+            const auto PWORKSPACE = header.pWindow->m_workspace;
+            if (PWORKSPACE) {
+                for (auto& n : m_dwindleNodesData) {
+                    if (n->workspaceID != PWORKSPACE->m_id)
+                        continue;
+
+                    const auto TOPMOSTSELECTED = getTopmostSelectedNode(n);
+                    if (TOPMOSTSELECTED) {
+                        // There's a selected node, use its parent
+                        nodeToExpand = TOPMOSTSELECTED->pParent.lock();
+                        break;
+                    }
+                }
+            }
+
+            // If no selected node was found, use the current window's parent
+            if (!nodeToExpand) {
+                nodeToExpand = PNODE->pParent.lock();
+            }
+
+            if (!nodeToExpand) {
+                return "";
+            }
+
+            // Set selected=true for all windows under the parent node (including both children)
+            setSelectedRecursive(nodeToExpand, true);
+
+            // Focus the first window in the selected branch (top of the selection)
+            std::function<PHLWINDOW(SP<SDwindleNodeData>)> findFirstWindow = [&](SP<SDwindleNodeData> node) -> PHLWINDOW {
+                if (!node)
+                    return nullptr;
+                if (!node->isNode && !node->pWindow.expired())
+                    return node->pWindow.lock();
+                if (node->children[0]) {
+                    auto w = findFirstWindow(node->children[0].lock());
+                    if (w)
+                        return w;
+                }
+                if (node->children[1]) {
+                    auto w = findFirstWindow(node->children[1].lock());
+                    if (w)
+                        return w;
+                }
+                return nullptr;
+            };
+
+            auto windowToFocus = findFirstWindow(nodeToExpand);
+            if (windowToFocus) {
+                Desktop::focusState()->fullWindowFocus(windowToFocus, nullptr, false, true);
+            }
+        } else if (target == "brother") {
+            // Focus the brother (sibling) node - behaves like bspc node -f @brother
+            // Behavior:
+            // 1. Leaf focused (no selection): focus the sibling leaf
+            // 2. Parent selected (all children selected): select all windows in sibling subtree, deselect current
+            // 3. This allows toggling between sibling subtrees at any level
+
+            // Helper to find the first window in a subtree
+            std::function<PHLWINDOW(SP<SDwindleNodeData>)> findFirstWindow = [&](SP<SDwindleNodeData> node) -> PHLWINDOW {
+                if (!node)
+                    return nullptr;
+                if (!node->isNode && !node->pWindow.expired())
+                    return node->pWindow.lock();
+                if (node->children[0]) {
+                    auto w = findFirstWindow(node->children[0].lock());
+                    if (w)
+                        return w;
+                }
+                if (node->children[1]) {
+                    auto w = findFirstWindow(node->children[1].lock());
+                    if (w)
+                        return w;
+                }
+                return nullptr;
+            };
+
+            // First, check if there's a selected node (parent with all children selected)
+            SP<SDwindleNodeData> currentNode = nullptr;
+            const auto           PWORKSPACE  = header.pWindow->m_workspace;
+
+            if (PWORKSPACE) {
+                for (auto& n : m_dwindleNodesData) {
+                    if (n->workspaceID != PWORKSPACE->m_id)
+                        continue;
+
+                    const auto TOPMOSTSELECTED = getTopmostSelectedNode(n);
+                    if (TOPMOSTSELECTED) {
+                        currentNode = TOPMOSTSELECTED;
+                        break;
+                    }
+                }
+            }
+
+            // If no selected node, use the current window's leaf node
+            if (!currentNode) {
+                currentNode = PNODE;
+            }
+
+            // Get the parent to find the sibling
+            const auto PPARENT = currentNode->pParent.lock();
+            if (!PPARENT) {
+                return ""; // No parent means no sibling (root node)
+            }
+
+            // Find the sibling (brother) node
+            SP<SDwindleNodeData> brotherNode = nullptr;
+            if (PPARENT->children[0].lock() == currentNode) {
+                brotherNode = PPARENT->children[1].lock();
+            } else {
+                brotherNode = PPARENT->children[0].lock();
+            }
+
+            if (!brotherNode) {
+                return "";
+            }
+
+            // Clear current selection
+            g_pCompositor->clearAllWindowsSelectedStates();
+
+            // Check if brother is a leaf or a parent node
+            if (!brotherNode->isNode) {
+                // Brother is a leaf - just focus it (no selection needed)
+                auto windowToFocus = findFirstWindow(brotherNode);
+                if (windowToFocus) {
+                    Desktop::focusState()->fullWindowFocus(windowToFocus);
+                }
+            } else {
+                // Brother is a parent node - select all its children and focus the first window
+                setSelectedRecursive(brotherNode, true);
+
+                auto windowToFocus = findFirstWindow(brotherNode);
+                if (windowToFocus) {
+                    Desktop::focusState()->fullWindowFocus(windowToFocus, nullptr, false, true);
+                }
+            }
+        } else if (target == "first") {
+            // Find the topmost selected node
+            SP<SDwindleNodeData> topmostSelected = nullptr;
+
+            const auto           PWORKSPACE = header.pWindow->m_workspace;
+            if (PWORKSPACE) {
+                for (auto& n : m_dwindleNodesData) {
+                    if (n->workspaceID != PWORKSPACE->m_id)
+                        continue;
+
+                    topmostSelected = getTopmostSelectedNode(n);
+                    if (topmostSelected)
+                        break;
+                }
+            }
+
+            if (!topmostSelected) {
+                return "";
+            }
+
+            // Get the first child
+            auto firstChild = topmostSelected->children[0].lock();
+
+            if (!firstChild) {
+                return "";
+            }
+
+            // Clear all selections and focus a window in the first child
+            g_pCompositor->clearAllWindowsSelectedStates();
+
+            // Find a window to focus in the first child subtree
+            std::function<PHLWINDOW(SP<SDwindleNodeData>)> findWindow = [&](SP<SDwindleNodeData> node) -> PHLWINDOW {
+                if (!node)
+                    return nullptr;
+                if (!node->isNode && !node->pWindow.expired())
+                    return node->pWindow.lock();
+                if (node->children[0]) {
+                    auto w = findWindow(node->children[0].lock());
+                    if (w)
+                        return w;
+                }
+                if (node->children[1]) {
+                    auto w = findWindow(node->children[1].lock());
+                    if (w)
+                        return w;
+                }
+                return nullptr;
+            };
+
+            auto windowToFocus = findWindow(firstChild);
+            if (windowToFocus) {
+                Desktop::focusState()->fullWindowFocus(windowToFocus);
+            }
+        } else if (target == "second") {
+            // Find the topmost selected node
+            SP<SDwindleNodeData> topmostSelected = nullptr;
+
+            const auto           PWORKSPACE = header.pWindow->m_workspace;
+            if (PWORKSPACE) {
+                for (auto& n : m_dwindleNodesData) {
+                    if (n->workspaceID != PWORKSPACE->m_id)
+                        continue;
+
+                    topmostSelected = getTopmostSelectedNode(n);
+                    if (topmostSelected)
+                        break;
+                }
+            }
+
+            if (!topmostSelected) {
+                return "";
+            }
+
+            // Get the second child
+            auto secondChild = topmostSelected->children[1].lock();
+
+            if (!secondChild) {
+                return "";
+            }
+
+            // Clear all selections first, then select only the second child and its descendants
+            g_pCompositor->clearAllWindowsSelectedStates();
+            setSelectedRecursive(secondChild, true);
+
+            // Focus the first window in the selected branch (top of the selection)
+            std::function<PHLWINDOW(SP<SDwindleNodeData>)> findFirstWindow = [&](SP<SDwindleNodeData> node) -> PHLWINDOW {
+                if (!node)
+                    return nullptr;
+                if (!node->isNode && !node->pWindow.expired())
+                    return node->pWindow.lock();
+                if (node->children[0]) {
+                    auto w = findFirstWindow(node->children[0].lock());
+                    if (w)
+                        return w;
+                }
+                if (node->children[1]) {
+                    auto w = findFirstWindow(node->children[1].lock());
+                    if (w)
+                        return w;
+                }
+                return nullptr;
+            };
+
+            auto windowToFocus = findFirstWindow(secondChild);
+            if (windowToFocus) {
+                Desktop::focusState()->fullWindowFocus(windowToFocus, nullptr, false, true);
+            }
+        } else if (target == "clear") {
+            g_pCompositor->clearAllWindowsSelectedStates();
         }
     }
 
